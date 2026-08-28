@@ -1,0 +1,1777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cosmic Conquest — Voxel Demo</title>
+<meta name="description" content="A 3D voxel-style playable preview of the units, palettes, and core loop of Cosmic Conquest. Same art bible, same roster, new geometry." />
+<style>
+  /* NEON RELIQUARY.  Palette first, flat interlocking shapes, hard cel edges,
+     spot blacks, no rendering tricks.  The HUD is faction-agnostic chrome
+     that does not compete with the scene. */
+  :root {
+    --void:        #0a0e17;
+    --void-2:      #060a12;
+    --human:       #38e8ff;
+    --human-deep:  #164e63;
+    --light:       #fbbf24;
+    --light-deep:  #78350f;
+    --xeno:        #7c3aed;
+    --xeno-bright: #a855f7;
+    --xeno-glow:   #ff2fd6;
+    --pirate:      #ef4444;
+    --pirate-deep: #7f1d1d;
+    --pirate-spark:#ff6b6b;
+    --chrome:      #94a3b8;
+    --paper:       #e6edf3;
+    --ink:         #020308;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--void);
+    color: var(--paper);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 30%, #1a0f2e 0%, #0a0e17 60%, #060a12 100%);
+  }
+  /* ─── TOP BAR (commander chrome) ─────────────────────────────────── */
+  .topbar {
+    display: flex; align-items: center; gap: 18px;
+    padding: 10px 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.4));
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    z-index: 5;
+  }
+  .logo {
+    font-weight: 900; letter-spacing: 2px; font-size: 18px;
+    color: var(--paper);
+    text-shadow: 0 0 12px rgba(56, 232, 255, 0.6);
+  }
+  .logo span { color: var(--light); text-shadow: 0 0 12px rgba(251, 191, 36, 0.6); }
+  .crest {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 10px; border: 1px solid currentColor;
+    border-radius: 4px; font-size: 11px; letter-spacing: 1.5px;
+    text-transform: uppercase; font-weight: 700;
+  }
+  .crest.human   { color: var(--human); }
+  .crest.light   { color: var(--light); }
+  .crest.xeno    { color: var(--xeno-bright); }
+  .crest.pirate  { color: var(--pirate); }
+  .stat {
+    display: inline-flex; align-items: baseline; gap: 6px;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+  }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--chrome); }
+  .stat-value { font-weight: 800; font-size: 16px; }
+  .stat-value.lives  { color: var(--pirate); text-shadow: 0 0 8px rgba(239, 68, 68, 0.6); }
+  .stat-value.gold   { color: var(--light); text-shadow: 0 0 8px rgba(251, 191, 36, 0.6); }
+  .stat-value.wave   { color: var(--human); }
+  .stat-value.units  { color: var(--chrome); }
+  .topbar .spacer { flex: 1; }
+  .btn {
+    background: rgba(56, 232, 255, 0.12);
+    color: var(--human);
+    border: 1px solid var(--human);
+    padding: 6px 12px;
+    font: inherit; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; font-size: 11px;
+    cursor: pointer; border-radius: 4px;
+    transition: background 0.1s, transform 0.05s;
+  }
+  .btn:hover { background: rgba(56, 232, 255, 0.22); }
+  .btn:active { transform: translateY(1px); }
+  .btn.gold { color: var(--light); border-color: var(--light); background: rgba(251, 191, 36, 0.10); }
+  .btn.gold:hover { background: rgba(251, 191, 36, 0.22); }
+  .btn.ghost { color: var(--chrome); border-color: rgba(148, 163, 184, 0.4); background: transparent; }
+  .btn.ghost:hover { background: rgba(148, 163, 184, 0.1); }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* ─── LOADOUT (faction-aware picker row) ─────────────────────────── */
+  .loadout {
+    display: flex; gap: 8px; padding: 10px 16px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.5), rgba(0,0,0,0.2));
+    border-top: 1px solid rgba(255,255,255,0.08);
+    z-index: 5;
+  }
+  .loadout .hint {
+    align-self: center; font-size: 11px; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--chrome); margin-right: 6px;
+  }
+  .unit-card {
+    width: 92px; padding: 8px 6px 6px;
+    background: rgba(0,0,0,0.55);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.08s, border-color 0.1s, background 0.1s;
+    position: relative;
+  }
+  .unit-card .preview {
+    width: 100%; height: 56px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 4px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.4));
+    border: 1px solid rgba(0,0,0,0.5);
+    border-radius: 3px;
+    image-rendering: pixelated;
+  }
+  .unit-card .preview canvas { display: block; }
+  .unit-card .name {
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--paper);
+  }
+  .unit-card .cost {
+    font-size: 10px; color: var(--light); font-weight: 700;
+  }
+  .unit-card .key {
+    position: absolute; top: 4px; right: 6px;
+    font-size: 9px; color: var(--chrome); font-weight: 800;
+  }
+  .unit-card:hover { transform: translateY(-2px); border-color: var(--paper); }
+  .unit-card.selected { border-color: var(--human); background: rgba(56, 232, 255, 0.12); }
+  .unit-card.selected .key { color: var(--human); }
+  .unit-card.unavailable { opacity: 0.4; cursor: not-allowed; }
+  .unit-card.unavailable:hover { transform: none; border-color: rgba(255,255,255,0.08); }
+  .unit-card[data-faction="light"]  .name { color: var(--light); }
+  .unit-card[data-faction="xeno"]   .name { color: var(--xeno-bright); }
+  .unit-card[data-faction="pirate"] .name { color: var(--pirate); }
+  .unit-card[data-faction="human"]  .name { color: var(--human); }
+
+  /* ─── SELECTED INFO PANEL ────────────────────────────────────────── */
+  .info {
+    position: fixed; right: 16px; top: 64px;
+    width: 240px;
+    background: rgba(6, 10, 18, 0.92);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 4px;
+    padding: 12px;
+    z-index: 4;
+    backdrop-filter: blur(6px);
+  }
+  .info h3 {
+    margin: 0 0 4px; font-size: 12px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--chrome);
+  }
+  .info .iname {
+    font-size: 18px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .info .idesc { font-size: 12px; color: var(--paper); opacity: 0.85; margin-top: 6px; line-height: 1.45; }
+  .info .stats {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
+    margin-top: 10px; font-size: 11px;
+  }
+  .info .stats .k { color: var(--chrome); text-transform: uppercase; letter-spacing: 1px; }
+  .info .stats .v { color: var(--paper); font-weight: 700; }
+  .info .meta {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 10px; color: var(--chrome); text-transform: uppercase; letter-spacing: 1.5px;
+  }
+  .info .faction-tag {
+    display: inline-block; padding: 1px 6px; border: 1px solid currentColor;
+    border-radius: 2px; font-size: 9px; letter-spacing: 1.5px;
+    margin-left: 6px; vertical-align: middle;
+  }
+
+  /* ─── RANGE PREVIEW OVERLAY ─────────────────────────────────────── */
+  #stage canvas { display: block; }
+  #fps { position: fixed; left: 8px; bottom: 6px; color: var(--chrome); font-size: 10px; letter-spacing: 1px; z-index: 3; }
+
+  /* ─── TOAST ─────────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; left: 50%; top: 12%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.85);
+    border: 1px solid var(--pirate);
+    color: var(--paper);
+    padding: 10px 18px;
+    border-radius: 4px;
+    font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; font-size: 12px;
+    z-index: 10;
+    animation: toast-pop 0.3s ease-out;
+  }
+  .toast.gold { border-color: var(--light); }
+  .toast.human { border-color: var(--human); }
+  @keyframes toast-pop { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  /* ─── SPLASH / INTRO ────────────────────────────────────────────── */
+  #splash {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, #1a0f2e 0%, #0a0e17 70%, #060a12 100%);
+    z-index: 20;
+  }
+  #splash.hidden { display: none; }
+  #splash .panel {
+    text-align: center; padding: 36px 48px;
+    border: 1px solid rgba(56, 232, 255, 0.3);
+    background: rgba(6, 10, 18, 0.7);
+    border-radius: 6px;
+    max-width: 520px;
+  }
+  #splash h1 {
+    margin: 0 0 6px; font-size: 36px; font-weight: 900; letter-spacing: 4px;
+    text-shadow: 0 0 24px rgba(56, 232, 255, 0.6);
+  }
+  #splash h1 span { color: var(--light); text-shadow: 0 0 24px rgba(251, 191, 36, 0.6); }
+  #splash .sub { font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--chrome); margin-bottom: 22px; }
+  #splash .brief { font-size: 13px; line-height: 1.6; color: var(--paper); opacity: 0.85; margin-bottom: 22px; }
+  #splash .brief b { color: var(--human); }
+  #splash .picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+  #splash .picker button {
+    padding: 14px 8px; background: rgba(0,0,0,0.5);
+    border: 1px solid currentColor; color: var(--chrome);
+    font: inherit; font-weight: 800; letter-spacing: 2px; text-transform: uppercase;
+    cursor: pointer; border-radius: 4px; font-size: 12px;
+    transition: background 0.1s;
+  }
+  #splash .picker button:hover { background: rgba(255,255,255,0.06); }
+  #splash .picker button[data-faction="human"]  { color: var(--human); }
+  #splash .picker button[data-faction="light"]  { color: var(--light); }
+  #splash .picker button[data-faction="xeno"]   { color: var(--xeno-bright); }
+  #splash .picker button[data-faction="pirate"] { color: var(--pirate); }
+  #splash .picker button small { display: block; font-size: 9px; color: var(--chrome); letter-spacing: 1px; margin-top: 4px; font-weight: 400; text-transform: none; }
+  #splash .go { font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- ─── SPLASH: pick your faction ──────────────────────────── -->
+<div id="splash">
+  <div class="panel">
+    <div class="sub">A voxel demo of the Cosmic Conquest universe</div>
+    <h1>COSMIC<span>CONQUEST</span></h1>
+    <p class="brief">
+      The <b>mechanics</b> are the same: place units, hold the lane, do not lose your lives.
+      The <b>geometry</b> is new: every unit is rebuilt as a 3D voxel rig in the faction palette of
+      its power, on a floating arena in deep space. The roster of <b>20 units across 4 factions</b> is
+      the working roster from <code>js/factions.js</code> — translated, not invented.
+    </p>
+    <div class="picker" id="splash-picker">
+      <button data-faction="human">Humanity <small>cyan · cold industry</small></button>
+      <button data-faction="light">Federation <small>gold · holy light</small></button>
+      <button data-faction="xeno">The Xeno <small>violet · wet and wrong</small></button>
+      <button data-faction="pirate">Pirates <small>crimson · salvage</small></button>
+    </div>
+    <div class="go">
+      <button class="btn gold" id="btn-go" disabled>CHOOSE A FACTION</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── MAIN STAGE ────────────────────────────────────────── -->
+<div id="stage">
+  <div class="topbar">
+    <span class="logo">COSMIC<span>CONQUEST</span></span>
+    <span class="crest" id="crest">FACTION</span>
+    <span class="stat"><span class="stat-label">Lives</span><span class="stat-value lives" id="hud-lives">20</span></span>
+    <span class="stat"><span class="stat-label">Gold</span><span class="stat-value gold" id="hud-gold">180</span></span>
+    <span class="stat"><span class="stat-label">Wave</span><span class="stat-value wave" id="hud-wave">0 / 10</span></span>
+    <span class="stat"><span class="stat-label">Units</span><span class="stat-value units" id="hud-units">0</span></span>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="btn-pause">PAUSE</button>
+    <button class="btn" id="btn-spawn">SEND WAVE ⏎</button>
+    <button class="btn gold" id="btn-speed">SPEED 1×</button>
+    <button class="btn ghost" id="btn-reset">RESET</button>
+  </div>
+
+  <!-- Three.js canvas mounts here -->
+  <div id="canvas-wrap" style="position: relative;"></div>
+
+  <div class="loadout" id="loadout">
+    <span class="hint">DETACHMENT · CLICK A UNIT, THEN CLICK A HIGHLIGHTED TILE · HOTKEYS 1–4</span>
+    <!-- unit cards rendered here -->
+  </div>
+</div>
+
+<!-- ─── INFO PANEL (selected unit details) ────────────────── -->
+<aside class="info" id="info" hidden>
+  <h3>SELECTED UNIT</h3>
+  <div class="iname" id="info-name">—</div>
+  <p class="idesc" id="info-desc"></p>
+  <div class="stats" id="info-stats"></div>
+  <div class="meta" id="info-meta"></div>
+</aside>
+
+<div id="fps"></div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     THREE.JS  +  GAME
+     ═══════════════════════════════════════════════════════════ -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ═══════════════════════════════════════════════════════════
+   1.  ROSTER  (lifted from js/factions.js, all 20)
+   ═══════════════════════════════════════════════════════════ */
+
+// Per-faction palette tokens (Art Bible section 2/3)
+const PALETTE = {
+  void:    0x0a0e17,
+  void2:   0x060a12,
+  ink:     0x020308,
+  // HUMANITY — duotone, cyan + magenta spark
+  human:      0x38e8ff,
+  humanDeep:  0x164e63,
+  humanLight: 0x67e8f9,
+  humanArmor: 0x22d3ee,
+  humanEdge:  0x0ea5e9,
+  humanCore:  0x06b6d4,
+  humanSpark: 0xff2fd6,
+  // FEDERATION — monochrome radiant gold
+  light:      0xfbbf24,
+  lightDeep:  0x78350f,
+  lightLight: 0xfde68a,
+  lightIvory: 0xfff7e0,
+  // XENO — duotone, violet + hot magenta bioluminescence
+  xeno:       0x7c3aed,
+  xenoDeep:   0x3b0764,
+  xenoBright: 0xa855f7,
+  xenoGlow:   0xff2fd6,
+  // PIRATES — monochrome crimson + spark
+  pirate:       0xef4444,
+  pirateDeep:   0x7f1d1d,
+  pirateLight:  0xff6b6b,
+  pirateRust:   0xb45309,
+  // neutral chrome — machines, path
+  chrome:    0x94a3b8,
+  chromeDim: 0x475569,
+  // env
+  rock:      0x2a2418,
+  rockDark:  0x1a1610,
+  rockLight: 0x3d3424,
+  nebula1:   0x4c1d95,
+  nebula2:   0x831843,
+  nebula3:   0x1e3a8a,
+};
+
+// Cost ladder — derived from the 5-tier ladder, light→heavy.
+// Roughly tuned so you can field ~4 of the cheap ones or 1 of the heavy ones.
+const UNIT_COST = (hp) => Math.max(15, Math.round(hp * 0.55));
+
+// shape -> the silhouette the game already uses, kept as a tag for the
+// build menu & the unit silhouette mini-canvas in the loadout.
+const UNITS = [
+  // ── HUMANITY ──────────────────────────────────────────
+  { id:'trooper',     faction:'human',  name:'Trooper',     hp:66,  speed:1.15, armor:2, lives:1, shape:'block',   tag:'Line infantry on alien drives.' },
+  { id:'gunskiff',    faction:'human',  name:'Foo Fighter', hp:92,  speed:1.5,  armor:2, lives:1, shape:'diamond', tag:'The lights bomber crews reported. Now it flies the maze.' },
+  { id:'linebreaker', faction:'human',  name:'Aurora',      hp:335, speed:0.74, armor:10,lives:3, shape:'hex',     tag:'Bolted-on alien plate, heated against cold.' },
+  { id:'dragoon',     faction:'human',  name:'Black Manta', hp:405, speed:0.85, armor:9, lives:3, shape:'warden',  tag:'Anchored assault armour. Cannot be displaced.' },
+  { id:'vanguard',    faction:'human',  name:'TR-3B',       hp:465, speed:0.72, armor:12,lives:3, shape:'vanguard',tag:'AURA: +9 armour within 2.6 tiles. The big quiet triangle.' },
+
+  // ── FEDERATION OF LIGHT ────────────────────────────────
+  { id:'votary',      faction:'light',  name:'Votary',      hp:96,  speed:1.4,  armor:3, lives:1, shape:'block',   tag:'A member surrenders their life eternally to the cause.' },
+  { id:'censer',      faction:'light',  name:'Censer',      hp:150, speed:0.95, armor:3, lives:2, shape:'diamond', tag:'Burns. Carries ward-light into the lane.' },
+  { id:'sanctifier',  faction:'light',  name:'Sanctifier',  hp:235, speed:1.0,  armor:5, lives:2, shape:'hex',     tag:'A walking reliquary. Its ward reforms elsewhere.' },
+  { id:'oriflamme',   faction:'light',  name:'Oriflamme',   hp:405, speed:0.82, armor:9, lives:3, shape:'vanguard',tag:'The banner under which a vow is renewed. AURA radiates.' },
+  { id:'luminark',    faction:'light',  name:'Luminark',    hp:520, speed:0.62, armor:12,lives:3, shape:'obelisk', tag:'A radiant column. AURA: +armour to every sworn ally.' },
+
+  // ── THE XENO ───────────────────────────────────────────
+  { id:'chitling',    faction:'xeno',   name:'Chitling',    hp:48,  speed:1.6,  armor:0, lives:1, shape:'block',   tag:'Wet carapace. Bred for the lane, not the long fight.' },
+  { id:'gnawling',    faction:'xeno',   name:'Gnawling',    hp:64,  speed:1.3,  armor:1, lives:1, shape:'diamond', tag:'Too many joints. Eats through what it should not.' },
+  { id:'bloatpod',    faction:'xeno',   name:'Bloatpod',    hp:158, speed:1.0,  armor:1, lives:2, shape:'hex',     tag:'Bursts into four Chitlings on death. The favour is half.' },
+  { id:'hivelord',    faction:'xeno',   name:'Hivelord',    hp:345, speed:0.9,  armor:7, lives:3, shape:'warden',  tag:'Anchors a node of the mass. Cannot be displaced.' },
+  { id:'broodmother', faction:'xeno',   name:'Broodmother', hp:530, speed:0.62, armor:8, lives:3, shape:'vanguard',tag:'Births Chitlings continuously the whole way down the lane.' },
+
+  // ── THE PIRATES ────────────────────────────────────────
+  { id:'cutter',      faction:'pirate', name:'Cutter',      hp:46,  speed:2.4,  armor:0, lives:1, shape:'diamond', tag:'Stealth. Plasma cutlass. Out of the lane before you paint it.' },
+  { id:'boarder',     faction:'pirate', name:'Boarder',     hp:124, speed:1.3,  armor:2, lives:2, shape:'block',   tag:'Breathes your recycled air for a living.' },
+  { id:'scrapjack',   faction:'pirate', name:'Scrapjack',   hp:215, speed:1.1,  armor:4, lives:2, shape:'hex',     tag:'Jams what it cannot loot. Salvage welded onto salvage.' },
+  { id:'wrecker',     faction:'pirate', name:'Wrecker',     hp:268, speed:1.25,armor:4, lives:3, shape:'warden',  tag:'A siege rig. Layers of plated salvage. Storm finds the seams.' },
+  { id:'ironhulk',    faction:'pirate', name:'Ironhulk',    hp:440, speed:0.78,armor:11,lives:3, shape:'vanguard',tag:'AURA: a salvage tower that holds the line. Big, slow, indelible.' },
+];
+
+/* ═══════════════════════════════════════════════════════════
+   2.  THREE.JS SCENE  (camera, lights, floating arena, sky)
+   ═══════════════════════════════════════════════════════════ */
+
+const stage = document.getElementById('canvas-wrap');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NoToneMapping;  // keep colours flat per the art bible
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = null;  // CSS gradient shows through
+
+// Camera — slightly tilted, looks down at the arena.  Isometric-ish.
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
+const CAM_BASE = { x: 0, y: 22, z: 22 };
+const CAM_LOOK = { x: 0, y: 0, z: 0 };
+camera.position.set(CAM_BASE.x, CAM_BASE.y, CAM_BASE.z);
+camera.lookAt(CAM_LOOK.x, CAM_LOOK.y, CAM_LOOK.z);
+
+// Lights — one warm key from upper-left, one cool fill from the cosmic sky.
+// Hard shadows, no softening.  Painted, not rendered.
+const keyLight = new THREE.DirectionalLight(0xfff2d6, 1.1);
+keyLight.position.set(-8, 16, 6);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -20;
+keyLight.shadow.camera.right = 20;
+keyLight.shadow.camera.top = 20;
+keyLight.shadow.camera.bottom = -20;
+keyLight.shadow.bias = -0.0005;
+keyLight.shadow.radius = 1;  // hard
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x6f8eff, 0.35);
+fillLight.position.set(8, 10, -6);
+scene.add(fillLight);
+
+// A very low ambient so the unlit sides of cubes are still readable as the
+// faction shadow colour, not pure black.
+const amb = new THREE.AmbientLight(0x2a3344, 0.45);
+scene.add(amb);
+
+/* ─── SKYBOX: a painted-feel nebula on a large back-sphere ───────── */
+{
+  const skyGeo = new THREE.SphereGeometry(80, 32, 16);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { time: { value: 0 } },
+    vertexShader: `
+      varying vec3 vPos;
+      void main() {
+        vPos = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      varying vec3 vPos;
+      uniform float time;
+      // hash for dithering
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      void main() {
+        vec3 dir = normalize(vPos);
+        // a vertical gradient: violet on top, magenta mid, indigo bottom
+        float y = dir.y * 0.5 + 0.5;
+        vec3 a = vec3(0.20, 0.05, 0.35);   // deep violet
+        vec3 b = vec3(0.50, 0.10, 0.45);   // magenta
+        vec3 c = vec3(0.05, 0.10, 0.30);   // indigo
+        vec3 col = mix(c, b, smoothstep(0.0, 0.55, y));
+        col = mix(col, a, smoothstep(0.55, 1.0, y));
+        // two soft "nebula" pools
+        float n1 = smoothstep(0.7, 1.0, dot(dir, normalize(vec3( 0.6, 0.2, -0.4))));
+        float n2 = smoothstep(0.65, 1.0, dot(dir, normalize(vec3(-0.5, 0.3,  0.5))));
+        col += n1 * vec3(0.45, 0.15, 0.55) * 0.6;
+        col += n2 * vec3(0.20, 0.40, 0.85) * 0.4;
+        // dither to break banding
+        float d = hash(gl_FragCoord.xy) * 0.03;
+        gl_FragColor = vec4(col + d, 1.0);
+      }`,
+  });
+  const sky = new THREE.Mesh(skyGeo, skyMat);
+  scene.add(sky);
+  scene.userData.sky = sky;
+}
+
+/* ─── DISTANT VOXEL PLANETS (slow drift) ─────────────────────────── */
+function makePlanet(color, size, dist, orbitSpeed) {
+  // a low-poly sphere built from boxes for the voxel look at distance
+  const grp = new THREE.Group();
+  const N = 14;
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N / 2; j++) {
+      const phi = (i / N) * Math.PI;
+      const theta = (j / (N/2)) * Math.PI * 2;
+      const r = size + (Math.random() - 0.5) * 0.08;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      const c = new THREE.Color(color);
+      c.offsetHSL(0, 0, (Math.random() - 0.5) * 0.08);
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.55, 0.55, 0.55),
+        new THREE.MeshLambertMaterial({ color: c, flatShading: true })
+      );
+      m.position.set(x, y, z);
+      grp.add(m);
+    }
+  }
+  grp.userData.orbit = { dist, angle: Math.random() * Math.PI * 2, speed: orbitSpeed };
+  scene.add(grp);
+  return grp;
+}
+const planet1 = makePlanet(0x6d28d9, 2.4, 36, 0.04);
+const planet2 = makePlanet(0xbe185d, 1.6, 50, -0.025);
+
+/* ═══════════════════════════════════════════════════════════
+   3.  THE ARENA  (floating asteroid, the play surface)
+   ═══════════════════════════════════════════════════════════ */
+
+// Grid dimensions — kept in the same family as the 30×20 maps in the
+// original game, so the demo reads as the same kind of board.
+const GRID = { cols: 16, rows: 11 };
+const TILE = 1.4;             // world units per tile
+const HALF_W = (GRID.cols * TILE) / 2;
+const HALF_H = (GRID.rows * TILE) / 2;
+const ARENA_TOP = 0;          // top surface of the arena
+
+// 3D path through the arena (waypoints in tile coords).  Windy S so the
+// path is visible from the camera and the player has to think.
+const PATH_TILES = [
+  [-1, 5], [2, 5], [2, 2], [6, 2], [6, 8], [10, 8], [10, 4], [13, 4], [13, 9], [16, 9]
+];
+function tileToWorld(c, r, y = 0) {
+  return { x: -HALF_W + (c + 0.5) * TILE, z: -HALF_H + (r + 0.5) * TILE, y };
+}
+const PATH = PATH_TILES.map(([c, r]) => {
+  const w = tileToWorld(c, r, ARENA_TOP);
+  return new THREE.Vector3(w.x, w.y + 0.35, w.z);
+});
+
+/* Build the floating island as a chunky voxel chunk */
+function buildArena() {
+  const arena = new THREE.Group();
+  const colTop = new THREE.Color(PALETTE.rockLight);
+  const colMid = new THREE.Color(PALETTE.rock);
+  const colBot = new THREE.Color(PALETTE.rockDark);
+
+  // We assemble the island as a collection of voxel columns, with a procedural
+  // noise function deciding height, so the underside is a chunky asteroid shape.
+  const noise = (x, z) => {
+    // simple pseudo-noise
+    const a = Math.sin(x * 1.3 + z * 0.7) * 0.5 + 0.5;
+    const b = Math.sin(x * 0.6 - z * 1.1) * 0.5 + 0.5;
+    return (a + b) * 0.5;
+  };
+
+  // Floor tiles
+  for (let c = -1; c <= GRID.cols; c++) {
+    for (let r = -1; r <= GRID.rows; r++) {
+      // height: edges drop off
+      const edge = Math.min(c + 1, GRID.cols - c, r + 1, GRID.rows - r);
+      const baseDepth = edge < 0 ? 0 : (edge <= 1 ? 1.4 : 2.4 + noise(c, r) * 1.6);
+      for (let h = 0; h < baseDepth; h++) {
+        const t = h / Math.max(1, baseDepth);
+        const col = new THREE.Color().lerpColors(colBot, colTop, t);
+        const m = new THREE.Mesh(
+          new THREE.BoxGeometry(TILE, 0.7, TILE),
+          new THREE.MeshLambertMaterial({ color: col, flatShading: true })
+        );
+        m.position.set(-HALF_W + (c + 0.5) * TILE, -0.35 - h * 0.7, -HALF_H + (r + 0.5) * TILE);
+        m.receiveShadow = true;
+        m.castShadow = (h === 0);
+        arena.add(m);
+      }
+    }
+  }
+
+  // Path tiles — slightly inset, lighter, reads as the "road"
+  for (let i = 0; i < PATH_TILES.length - 1; i++) {
+    const [c1, r1] = PATH_TILES[i];
+    const [c2, r2] = PATH_TILES[i + 1];
+    const steps = Math.max(Math.abs(c2 - c1), Math.abs(r2 - r1)) * 2;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const c = Math.round(c1 + (c2 - c1) * t);
+      const r = Math.round(r1 + (r2 - r1) * t);
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(TILE * 0.96, 0.12, TILE * 0.96),
+        new THREE.MeshLambertMaterial({ color: 0x6b5a3a, flatShading: true })
+      );
+      m.position.set(-HALF_W + (c + 0.5) * TILE, 0.07, -HALF_H + (r + 0.5) * TILE);
+      m.receiveShadow = true;
+      arena.add(m);
+    }
+  }
+
+  // Decorative crystals at the corners — voxel mineral clusters
+  const crystalSpots = [[1, 1], [GRID.cols - 2, 1], [1, GRID.rows - 2], [GRID.cols - 2, GRID.rows - 2], [8, 5]];
+  for (const [c, r] of crystalSpots) {
+    const cluster = new THREE.Group();
+    const hues = [PALETTE.xenoBright, PALETTE.human, PALETTE.light, PALETTE.pirate];
+    const baseCol = hues[Math.floor(Math.random() * hues.length)];
+    for (let k = 0; k < 5; k++) {
+      const s = 0.18 + Math.random() * 0.22;
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(s, s * 1.6, s),
+        new THREE.MeshLambertMaterial({ color: baseCol, emissive: baseCol, emissiveIntensity: 0.35, flatShading: true })
+      );
+      m.position.set((Math.random() - 0.5) * 0.6, s * 0.8, (Math.random() - 0.5) * 0.6);
+      m.rotation.set(Math.random() * 0.4, Math.random() * Math.PI, Math.random() * 0.4);
+      m.castShadow = true;
+      cluster.add(m);
+    }
+    const w = tileToWorld(c, r, 0);
+    cluster.position.set(w.x, 0, w.z);
+    arena.add(cluster);
+  }
+
+  // Floating motes around the arena — distant depth cue
+  for (let i = 0; i < 30; i++) {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.18, 0.18),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    m.position.set(
+      (Math.random() - 0.5) * 30,
+      (Math.random() - 0.5) * 6,
+      (Math.random() - 0.5) * 30
+    );
+    m.userData.drift = (Math.random() - 0.5) * 0.4;
+    arena.add(m);
+  }
+
+  return arena;
+}
+const arena = buildArena();
+scene.add(arena);
+
+/* ─── The lane indicator: glowing thin strip along the path centerline ─── */
+{
+  const pathGeom = new THREE.BufferGeometry().setFromPoints(PATH);
+  const pathMat = new THREE.LineBasicMaterial({ color: PALETTE.pirateSpark, transparent: true, opacity: 0.55 });
+  const pathLine = new THREE.Line(pathGeom, pathMat);
+  pathLine.position.y = 0.01;
+  arena.add(pathLine);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   4.  VOXEL UNIT RIGS  (the core: translate every unit into boxes)
+   ═══════════════════════════════════════════════════════════ */
+
+const BOX = new THREE.BoxGeometry(1, 1, 1);
+
+function setBoxMat(color, opts = {}) {
+  return new THREE.MeshLambertMaterial({
+    color,
+    emissive: opts.emissive || 0x000000,
+    emissiveIntensity: opts.emissiveIntensity || 0,
+    flatShading: true,
+  });
+}
+
+// Color resolver for a faction (uses the duotone/shadow values)
+function facColors(faction) {
+  switch (faction) {
+    case 'human':  return { main: PALETTE.human,      deep: PALETTE.humanDeep,  light: PALETTE.humanLight, spark: PALETTE.humanSpark };
+    case 'light':  return { main: PALETTE.light,      deep: PALETTE.lightDeep,  light: PALETTE.lightIvory, spark: PALETTE.lightIvory };
+    case 'xeno':   return { main: PALETTE.xeno,       deep: PALETTE.xenoDeep,   light: PALETTE.xenoBright,spark: PALETTE.xenoGlow };
+    case 'pirate': return { main: PALETTE.pirate,     deep: PALETTE.pirateDeep, light: PALETTE.pirateLight,spark: PALETTE.pirateSpark };
+  }
+}
+
+/* A unit rig is a Group of small boxes.  Per-unit shape is built from a tiny
+   DSL below so the same builder handles all 20.  The `tag` field is the
+   shape that already exists in the game data (block / diamond / hex /
+   warden / vanguard / obelisk / cross) — we preserve the silhouette while
+   making it read as a 3D rig.  Each rig is normalised to fit a ~1.0 cube. */
+
+function rigBlock(c, s = 1) {
+  // humanoid block, ~0.7 wide, ~1.4 tall
+  const g = new THREE.Group();
+  const head = new THREE.Mesh(BOX, setBoxMat(c.light));
+  head.scale.set(0.42 * s, 0.36 * s, 0.42 * s);
+  head.position.set(0, 0.55 * s, 0);
+  head.castShadow = true; g.add(head);
+  // visor strip
+  const visor = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  visor.scale.set(0.44 * s, 0.10 * s, 0.44 * s);
+  visor.position.set(0, 0.62 * s, 0);
+  g.add(visor);
+  // torso
+  const torso = new THREE.Mesh(BOX, setBoxMat(c.main));
+  torso.scale.set(0.55 * s, 0.50 * s, 0.34 * s);
+  torso.position.set(0, 0.10 * s, 0);
+  torso.castShadow = true; g.add(torso);
+  // legs
+  for (const x of [-0.14, 0.14]) {
+    const leg = new THREE.Mesh(BOX, setBoxMat(c.deep));
+    leg.scale.set(0.18 * s, 0.30 * s, 0.20 * s);
+    leg.position.set(x * s, -0.30 * s, 0);
+    leg.castShadow = true; g.add(leg);
+  }
+  // shoulder pads
+  for (const x of [-0.30, 0.30]) {
+    const sh = new THREE.Mesh(BOX, setBoxMat(c.deep));
+    sh.scale.set(0.15 * s, 0.18 * s, 0.30 * s);
+    sh.position.set(x * s, 0.18 * s, 0);
+    g.add(sh);
+  }
+  // weapon
+  const gun = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  gun.scale.set(0.10 * s, 0.10 * s, 0.40 * s);
+  gun.position.set(0.32 * s, 0.05 * s, 0.20 * s);
+  g.add(gun);
+  // spark
+  const spark = new THREE.Mesh(BOX, setBoxMat(c.spark, { emissive: c.spark, emissiveIntensity: 0.8 }));
+  spark.scale.set(0.05 * s, 0.05 * s, 0.05 * s);
+  spark.position.set(0.38 * s, 0.05 * s, 0.40 * s);
+  g.add(spark);
+  return g;
+}
+
+function rigDiamond(c, s = 1) {
+  // diamond = flying wedge / sharp triangle.  Two stacked wedges + a core.
+  const g = new THREE.Group();
+  const upper = new THREE.Mesh(BOX, setBoxMat(c.light));
+  upper.scale.set(0.55 * s, 0.30 * s, 0.55 * s);
+  upper.position.set(0, 0.20 * s, 0);
+  upper.castShadow = true; g.add(upper);
+  const lower = new THREE.Mesh(BOX, setBoxMat(c.main));
+  lower.scale.set(0.85 * s, 0.25 * s, 0.85 * s);
+  lower.position.set(0, -0.10 * s, 0);
+  lower.castShadow = true; g.add(lower);
+  const under = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  under.scale.set(0.50 * s, 0.20 * s, 0.50 * s);
+  under.position.set(0, -0.35 * s, 0);
+  under.castShadow = true; g.add(under);
+  // glowing core
+  const core = new THREE.Mesh(BOX, setBoxMat(c.spark, { emissive: c.spark, emissiveIntensity: 1.0 }));
+  core.scale.set(0.20 * s, 0.20 * s, 0.20 * s);
+  core.position.set(0, 0.20 * s, 0);
+  g.add(core);
+  return g;
+}
+
+function rigHex(c, s = 1) {
+  // a wider, six-sided implied hex.  We approximate with an octagonal stack
+  // of decreasing boxes: broad base, mid torso, pointed head.
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(BOX, setBoxMat(c.main));
+  base.scale.set(0.90 * s, 0.18 * s, 0.90 * s);
+  base.position.set(0, -0.20 * s, 0);
+  base.castShadow = true; g.add(base);
+  const mid = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  mid.scale.set(0.65 * s, 0.30 * s, 0.65 * s);
+  mid.position.set(0, 0.05 * s, 0);
+  mid.castShadow = true; g.add(mid);
+  const top = new THREE.Mesh(BOX, setBoxMat(c.main));
+  top.scale.set(0.45 * s, 0.22 * s, 0.45 * s);
+  top.position.set(0, 0.32 * s, 0);
+  top.castShadow = true; g.add(top);
+  // head
+  const head = new THREE.Mesh(BOX, setBoxMat(c.light));
+  head.scale.set(0.30 * s, 0.22 * s, 0.30 * s);
+  head.position.set(0, 0.55 * s, 0);
+  head.castShadow = true; g.add(head);
+  // eye/sensor band
+  const eye = new THREE.Mesh(BOX, setBoxMat(c.spark, { emissive: c.spark, emissiveIntensity: 0.9 }));
+  eye.scale.set(0.32 * s, 0.06 * s, 0.05 * s);
+  eye.position.set(0, 0.58 * s, 0.16 * s);
+  g.add(eye);
+  // corner antennae
+  for (const sx of [-0.20, 0.20]) {
+    const ant = new THREE.Mesh(BOX, setBoxMat(c.deep));
+    ant.scale.set(0.04 * s, 0.20 * s, 0.04 * s);
+    ant.position.set(sx * s, 0.72 * s, 0);
+    g.add(ant);
+  }
+  return g;
+}
+
+function rigWarden(c, s = 1) {
+  // big anchored unit, "the thing that holds the line"
+  const g = new THREE.Group();
+  // wide squat body
+  const body = new THREE.Mesh(BOX, setBoxMat(c.main));
+  body.scale.set(0.95 * s, 0.55 * s, 0.70 * s);
+  body.position.set(0, 0.05 * s, 0);
+  body.castShadow = true; g.add(body);
+  // shoulders
+  for (const sx of [-0.55, 0.55]) {
+    const sh = new THREE.Mesh(BOX, setBoxMat(c.deep));
+    sh.scale.set(0.20 * s, 0.50 * s, 0.55 * s);
+    sh.position.set(sx * s, 0.05 * s, 0);
+    sh.castShadow = true; g.add(sh);
+  }
+  // head
+  const head = new THREE.Mesh(BOX, setBoxMat(c.light));
+  head.scale.set(0.36 * s, 0.30 * s, 0.36 * s);
+  head.position.set(0, 0.50 * s, 0);
+  head.castShadow = true; g.add(head);
+  // chest core
+  const core = new THREE.Mesh(BOX, setBoxMat(c.spark, { emissive: c.spark, emissiveIntensity: 1.1 }));
+  core.scale.set(0.18 * s, 0.18 * s, 0.06 * s);
+  core.position.set(0, 0.10 * s, 0.36 * s);
+  g.add(core);
+  // leg stubs (rooted, pulls the silhouette down)
+  for (const sx of [-0.30, 0.30]) {
+    const leg = new THREE.Mesh(BOX, setBoxMat(c.deep));
+    leg.scale.set(0.22 * s, 0.18 * s, 0.40 * s);
+    leg.position.set(sx * s, -0.30 * s, 0);
+    leg.castShadow = true; g.add(leg);
+  }
+  return g;
+}
+
+function rigVanguard(c, s = 1) {
+  // aura-broadcaster, triangular silhouette, beam on top
+  const g = new THREE.Group();
+  // base
+  const base = new THREE.Mesh(BOX, setBoxMat(c.main));
+  base.scale.set(0.95 * s, 0.15 * s, 0.95 * s);
+  base.position.set(0, -0.25 * s, 0);
+  base.castShadow = true; g.add(base);
+  // body, slightly forward-leaning
+  const body = new THREE.Mesh(BOX, setBoxMat(c.main));
+  body.scale.set(0.80 * s, 0.45 * s, 0.60 * s);
+  body.position.set(0, 0.05 * s, 0);
+  body.castShadow = true; g.add(body);
+  // head
+  const head = new THREE.Mesh(BOX, setBoxMat(c.light));
+  head.scale.set(0.32 * s, 0.28 * s, 0.32 * s);
+  head.position.set(0, 0.42 * s, 0);
+  head.castShadow = true; g.add(head);
+  // beam / pylon on top
+  const beam = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  beam.scale.set(0.10 * s, 0.50 * s, 0.10 * s);
+  beam.position.set(0, 0.85 * s, 0);
+  g.add(beam);
+  const tip = new THREE.Mesh(BOX, setBoxMat(c.spark, { emissive: c.spark, emissiveIntensity: 1.5 }));
+  tip.scale.set(0.18 * s, 0.18 * s, 0.18 * s);
+  tip.position.set(0, 1.18 * s, 0);
+  g.add(tip);
+  // chest plate
+  const plate = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  plate.scale.set(0.55 * s, 0.35 * s, 0.06 * s);
+  plate.position.set(0, 0.05 * s, 0.31 * s);
+  g.add(plate);
+  return g;
+}
+
+function rigObelisk(c, s = 1) {
+  // tall column — the Luminark
+  const g = new THREE.Group();
+  // base plinth
+  const plinth = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  plinth.scale.set(0.80 * s, 0.20 * s, 0.80 * s);
+  plinth.position.set(0, -0.30 * s, 0);
+  plinth.castShadow = true; g.add(plinth);
+  // lower column
+  const lower = new THREE.Mesh(BOX, setBoxMat(c.main));
+  lower.scale.set(0.55 * s, 0.50 * s, 0.55 * s);
+  lower.position.set(0, 0.05 * s, 0);
+  lower.castShadow = true; g.add(lower);
+  // mid column (narrower)
+  const mid = new THREE.Mesh(BOX, setBoxMat(c.main));
+  mid.scale.set(0.40 * s, 0.40 * s, 0.40 * s);
+  mid.position.set(0, 0.50 * s, 0);
+  mid.castShadow = true; g.add(mid);
+  // top finial
+  const top = new THREE.Mesh(BOX, setBoxMat(c.light));
+  top.scale.set(0.30 * s, 0.30 * s, 0.30 * s);
+  top.position.set(0, 0.85 * s, 0);
+  g.add(top);
+  // crown (the ward-light)
+  const crown = new THREE.Mesh(BOX, setBoxMat(c.spark, { emissive: c.spark, emissiveIntensity: 1.6 }));
+  crown.scale.set(0.18 * s, 0.18 * s, 0.18 * s);
+  crown.position.set(0, 1.10 * s, 0);
+  g.add(crown);
+  // 4 corner spikes
+  for (const [sx, sz] of [[-0.30, -0.30], [0.30, -0.30], [-0.30, 0.30], [0.30, 0.30]]) {
+    const sp = new THREE.Mesh(BOX, setBoxMat(c.deep));
+    sp.scale.set(0.08 * s, 0.40 * s, 0.08 * s);
+    sp.position.set(sx * s, 0.10 * s, sz * s);
+    g.add(sp);
+  }
+  return g;
+}
+
+function rigCross(c, s = 1) {
+  // + silhouette, used for some mech units.  Not used in this roster but
+  // kept so the build DSL is complete.
+  const g = new THREE.Group();
+  const v = new THREE.Mesh(BOX, setBoxMat(c.main));
+  v.scale.set(0.30 * s, 1.10 * s, 0.30 * s);
+  v.position.set(0, 0.05 * s, 0);
+  v.castShadow = true; g.add(v);
+  const h = new THREE.Mesh(BOX, setBoxMat(c.deep));
+  h.scale.set(0.95 * s, 0.28 * s, 0.30 * s);
+  h.position.set(0, 0.25 * s, 0);
+  h.castShadow = true; g.add(h);
+  return g;
+}
+
+const RIG_BUILDERS = {
+  block: rigBlock, diamond: rigDiamond, hex: rigHex, warden: rigWarden,
+  vanguard: rigVanguard, obelisk: rigObelisk, cross: rigCross,
+};
+
+function buildUnitRig(unit) {
+  const c = facColors(unit.faction);
+  const builder = RIG_BUILDERS[unit.shape] || rigBlock;
+  const rig = builder(c, 1);
+  rig.userData = { unit, color: c };
+  return rig;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   5.  ENEMY RIGS  (simpler, used for waves)
+   ═══════════════════════════════════════════════════════════ */
+// Enemies share a unit's rig so the player reads the same silhouette coming
+// the other way.  We tint them with a "rival" desaturated treatment.
+function buildEnemyRig(unit) {
+  const rig = buildUnitRig(unit);
+  rig.traverse(o => {
+    if (o.isMesh && o.material) {
+      // desaturate a bit, push the spark dim, but keep silhouette
+      o.material = o.material.clone();
+      const m = o.material;
+      if (m.color) {
+        const hsl = { h: 0, s: 0, l: 0 };
+        m.color.getHSL(hsl);
+        m.color.setHSL(hsl.h, Math.max(0.15, hsl.s * 0.55), hsl.l * 0.85);
+      }
+      if (m.emissiveIntensity) m.emissiveIntensity *= 0.3;
+    }
+  });
+  return rig;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   6.  GAME STATE  (placements, enemies, waves, lives, gold)
+   ═══════════════════════════════════════════════════════════ */
+
+const Game = {
+  faction: null,
+  state: 'idle',          // 'idle' | 'playing' | 'paused' | 'won' | 'lost'
+  selected: null,         // selected unit id from loadout
+  placements: [],         // { unit, c, r, rig, hp, maxHp, dmg, range, cd, lastFire, aura? }
+  enemies: [],            // { unit, rig, hp, maxHp, c, r, progress, pathIdx, baseSpeed, slowUntil }
+  projectiles: [],        // { mesh, from, to, dmg, t, total, target, color }
+  gold: 180,
+  lives: 20,
+  wave: 0,
+  maxWaves: 10,
+  spawnQueue: [],
+  spawnTimer: 0,
+  spawnInterval: 0.55,
+  // buildable tile set
+  buildable: null,
+  hoverTile: null,
+  speed: 1,
+  rng: mulberry32(12345),
+};
+
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/* Compute which tiles are NOT on the path (i.e. where you can build) */
+function computeBuildable() {
+  const onPath = new Set();
+  for (let i = 0; i < PATH_TILES.length - 1; i++) {
+    const [c1, r1] = PATH_TILES[i];
+    const [c2, r2] = PATH_TILES[i + 1];
+    const steps = Math.max(Math.abs(c2 - c1), Math.abs(r2 - r1)) * 2;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const c = Math.round(c1 + (c2 - c1) * t);
+      const r = Math.round(r1 + (r2 - r1) * t);
+      onPath.add(`${c},${r}`);
+    }
+  }
+  const map = new Set();
+  for (let c = 0; c < GRID.cols; c++) {
+    for (let r = 0; r < GRID.rows; r++) {
+      if (!onPath.has(`${c},${r}`)) map.add(`${c},${r}`);
+    }
+  }
+  Game.buildable = map;
+}
+
+/* Highlight meshes for buildable / hover / out-of-range */
+const highlights = new THREE.Group();
+scene.add(highlights);
+
+function refreshHighlights() {
+  while (highlights.children.length) highlights.remove(highlights.children[0]);
+  if (!Game.selected) return;
+  const unit = UNITS.find(u => u.id === Game.selected);
+  if (!unit) return;
+  const rangeTiles = computeRangeTiles(unit);
+  for (const key of Game.buildable) {
+    const [c, r] = key.split(',').map(Number);
+    const inRange = rangeTiles.has(`${c},${r}`);
+    if (!inRange) continue;
+    const w = tileToWorld(c, r, 0);
+    const isHover = Game.hoverTile && Game.hoverTile.c === c && Game.hoverTile.r === r;
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(TILE * 0.94, 0.04, TILE * 0.94),
+      new THREE.MeshBasicMaterial({
+        color: isHover ? 0xffffff : facColors(unit.faction).main,
+        transparent: true,
+        opacity: isHover ? 0.5 : 0.22,
+      })
+    );
+    m.position.set(w.x, 0.13, w.z);
+    highlights.add(m);
+  }
+}
+
+// A "tier-1" unit can be placed anywhere; heavy units require the tile be
+// within 2 tiles of the path (so they actually see enemies).
+function computeRangeTiles(unit) {
+  const tier = Math.floor(unit.hp / 100);   // 0/1/2/3/4/5
+  if (tier <= 1) return new Set(Array.from(Game.buildable));
+  const onPath = new Set();
+  for (let i = 0; i < PATH_TILES.length - 1; i++) {
+    const [c1, r1] = PATH_TILES[i];
+    const [c2, r2] = PATH_TILES[i + 1];
+    const steps = Math.max(Math.abs(c2 - c1), Math.abs(r2 - r1)) * 2;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const c = Math.round(c1 + (c2 - c1) * t);
+      const r = Math.round(r1 + (r2 - r1) * t);
+      onPath.add(`${c},${r}`);
+    }
+  }
+  const out = new Set();
+  for (const key of Game.buildable) {
+    const [c, r] = key.split(',').map(Number);
+    for (let dc = -2; dc <= 2; dc++) for (let dr = -2; dr <= 2; dr++) {
+      if (onPath.has(`${c + dc},${r + dr}`)) { out.add(key); break; }
+    }
+  }
+  return out;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   7.  PLACEMENT  (click on a buildable tile)
+   ═══════════════════════════════════════════════════════════ */
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const canvas = renderer.domElement;
+
+function onPointerMove(ev) {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+  // raycast against a flat plane at y = 0.12 (top of the arena)
+  raycaster.setFromCamera(mouse, camera);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.12);
+  const hit = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(plane, hit)) {
+    const c = Math.floor((hit.x + HALF_W) / TILE);
+    const r = Math.floor((hit.z + HALF_H) / TILE);
+    if (c >= 0 && c < GRID.cols && r >= 0 && r < GRID.rows) {
+      const prev = Game.hoverTile;
+      Game.hoverTile = { c, r };
+      if (!prev || prev.c !== c || prev.r !== r) refreshHighlights();
+    } else {
+      Game.hoverTile = null;
+      refreshHighlights();
+    }
+  }
+}
+function onPointerDown(ev) {
+  if (ev.button !== 0) return;
+  if (!Game.hoverTile) return;
+  tryPlace(Game.hoverTile.c, Game.hoverTile.r);
+}
+canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointerdown', onPointerDown);
+
+function tryPlace(c, r) {
+  if (!Game.selected) return;
+  const key = `${c},${r}`;
+  if (!Game.buildable.has(key)) return;
+  const unit = UNITS.find(u => u.id === Game.selected);
+  if (!unit) return;
+  const cost = UNIT_COST(unit.hp);
+  if (Game.gold < cost) {
+    showToast(`NOT ENOUGH GOLD (need ${cost})`, 'gold');
+    return;
+  }
+  const rangeTiles = computeRangeTiles(unit);
+  if (!rangeTiles.has(key)) {
+    showToast('OUT OF RANGE', 'gold');
+    return;
+  }
+  Game.gold -= cost;
+  const rig = buildUnitRig(unit);
+  const w = tileToWorld(c, r, 0);
+  rig.position.set(w.x, 0.18, w.z);
+  rig.scale.setScalar(0.55);
+  scene.add(rig);
+  // rotation: face the nearest path tile
+  const nearestPath = nearestPathTile(c, r);
+  const dx = nearestPath.c - c;
+  const dr = nearestPath.r - r;
+  rig.rotation.y = Math.atan2(dr, dx) - Math.PI / 2;
+  // bobbing offset for animation
+  rig.userData.bobPhase = Math.random() * Math.PI * 2;
+  // build placement record
+  const placement = {
+    unit, c, r, rig,
+    hp: unit.hp,
+    maxHp: unit.hp,
+    range: 3 + Math.floor(unit.hp / 80),  // range scales with hp
+    dmg: 8 + Math.floor(unit.hp / 12),
+    cd: Math.max(0.4, 1.2 - unit.hp / 600),
+    lastFire: 0,
+    aura: unit.shape === 'vanguard' || unit.shape === 'obelisk' ? {
+      radius: unit.shape === 'obelisk' ? 3.0 : 2.6,
+      armor: Math.floor(unit.armor * 0.8),
+    } : null,
+  };
+  Game.placements.push(placement);
+  Sound.play('place');
+  updateHUD();
+  if (Game.state === 'playing' || Game.state === 'idle') {
+    if (Game.state === 'idle') Game.state = 'playing';
+  }
+  // paint a tiny HP bar above the placement
+  placement.hpBar = makeHpBar();
+  placement.hpBar.position.set(w.x, 1.2, w.z);
+  scene.add(placement.hpBar);
+  refreshHighlights();
+}
+
+function nearestPathTile(c, r) {
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < PATH_TILES.length; i++) {
+    const [pc, pr] = PATH_TILES[i];
+    const d = (pc - c) ** 2 + (pr - r) ** 2;
+    if (d < bestD) { bestD = d; best = { c: pc, r: pr }; }
+  }
+  return best;
+}
+
+function makeHpBar() {
+  // a tiny group of two boxes
+  const g = new THREE.Group();
+  const back = new THREE.Mesh(
+    new THREE.BoxGeometry(0.8, 0.08, 0.08),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.7 })
+  );
+  const fill = new THREE.Mesh(
+    new THREE.BoxGeometry(0.78, 0.06, 0.06),
+    new THREE.MeshBasicMaterial({ color: 0x00ff88 })
+  );
+  fill.position.z = 0.005;
+  g.add(back); g.add(fill);
+  g.userData.fill = fill;
+  return g;
+}
+function updateHpBar(p) {
+  const t = Math.max(0, p.hp / p.maxHp);
+  p.hpBar.userData.fill.scale.x = t;
+  // color from green→yellow→red
+  const c = p.hpBar.userData.fill.material.color;
+  if (t > 0.5) c.setHSL(0.33, 0.8, 0.5);
+  else if (t > 0.25) c.setHSL(0.13, 0.8, 0.5);
+  else c.setHSL(0.0, 0.8, 0.5);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   8.  ENEMIES & WAVES
+   ═══════════════════════════════════════════════════════════ */
+
+const ENEMY_DOCTRINE = {
+  // Each faction fields a wave roster — the same 5 units, in order,
+  // weighted to the heavier end as the wave number grows.
+  human:  ['trooper', 'gunskiff', 'linebreaker', 'dragoon', 'vanguard'],
+  light:  ['votary',  'censer',   'sanctifier',  'oriflamme','luminark'],
+  xeno:   ['chitling','gnawling', 'bloatpod',    'hivelord', 'broodmother'],
+  pirate: ['cutter',  'boarder',  'scrapjack',   'wrecker',  'ironhulk'],
+};
+
+function startNextWave() {
+  if (Game.state === 'won' || Game.state === 'lost') return;
+  if (Game.wave >= Game.maxWaves) return;
+  Game.wave++;
+  // roster: a function of wave number
+  const roster = ENEMY_DOCTRINE[Game.faction];
+  const heaviness = Math.min(roster.length - 1, Math.floor((Game.wave - 1) / 2));
+  const baseCount = 4 + Game.wave;
+  Game.spawnQueue = [];
+  for (let i = 0; i < baseCount; i++) {
+    // pick a unit.  Heavier units more common later.
+    const idx = Math.min(roster.length - 1, Math.floor(Game.rng() * (heaviness + 2)));
+    const unit = UNITS.find(u => u.id === roster[idx]);
+    Game.spawnQueue.push(unit);
+  }
+  Game.spawnTimer = 0.4;
+  showToast(`WAVE ${Game.wave} INCOMING`, 'pirate');
+  Sound.play('wave');
+}
+
+function spawnEnemy(unit) {
+  const rig = buildEnemyRig(unit);
+  const w = tileToWorld(...PATH_TILES[0], 0);
+  rig.position.set(w.x, 0.18, w.z);
+  rig.scale.setScalar(0.55);
+  scene.add(rig);
+  // hp bar
+  const hpBar = makeHpBar();
+  hpBar.position.set(w.x, 1.2, w.z);
+  scene.add(hpBar);
+  Game.enemies.push({
+    unit, rig, hpBar,
+    hp: unit.hp, maxHp: unit.hp,
+    armor: unit.armor,
+    pathIdx: 0,
+    progress: 0,
+    baseSpeed: 1.0 * unit.speed / 60,    // tiles per second
+    slowUntil: 0,
+    bobPhase: Math.random() * Math.PI * 2,
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
+   9.  SOUND  (tiny synthesized; no external assets)
+   ═══════════════════════════════════════════════════════════ */
+const Sound = (() => {
+  let ctx = null;
+  function init() {
+    if (ctx) return;
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  function tone(freq, dur, type = 'sine', vol = 0.15, attack = 0.005, release = 0.08) {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    o.connect(g);
+    g.connect(ctx.destination);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + attack);
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    o.start(t);
+    o.stop(t + dur + release);
+  }
+  function play(name) {
+    if (!ctx) return;
+    switch (name) {
+      case 'place':  tone(880, 0.08, 'square', 0.10); tone(1320, 0.10, 'square', 0.06); break;
+      case 'click':  tone(660, 0.05, 'square', 0.07); break;
+      case 'wave':   tone(220, 0.20, 'sawtooth', 0.08); tone(165, 0.30, 'sawtooth', 0.08); break;
+      case 'fire':   tone(1100, 0.04, 'square', 0.04); break;
+      case 'hit':    tone(180, 0.05, 'square', 0.08); break;
+      case 'kill':   tone(440, 0.10, 'square', 0.10); tone(660, 0.10, 'square', 0.08); break;
+      case 'leak':   tone(120, 0.20, 'sawtooth', 0.10); break;
+      case 'denied': tone(220, 0.10, 'square', 0.08); break;
+      case 'win':    [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'square', 0.10), i * 120)); break;
+      case 'lose':   [330, 247, 196, 165].forEach((f, i) => setTimeout(() => tone(f, 0.25, 'sawtooth', 0.10), i * 140)); break;
+    }
+  }
+  return { init, play };
+})();
+
+// wire audio init to first pointerdown
+window.addEventListener('pointerdown', () => Sound.init(), { once: true });
+
+/* ═══════════════════════════════════════════════════════════
+   10.  HUD & TOASTS
+   ═══════════════════════════════════════════════════════════ */
+
+const hLives = document.getElementById('hud-lives');
+const hGold  = document.getElementById('hud-gold');
+const hWave  = document.getElementById('hud-wave');
+const hUnits = document.getElementById('hud-units');
+const crestEl = document.getElementById('crest');
+const loadoutEl = document.getElementById('loadout');
+const infoEl = document.getElementById('info');
+
+function updateHUD() {
+  hLives.textContent = String(Game.lives);
+  hGold.textContent = String(Game.gold);
+  hWave.textContent = `${Game.wave} / ${Game.maxWaves}`;
+  hUnits.textContent = String(Game.placements.length);
+  // refresh unit card affordability
+  document.querySelectorAll('.unit-card').forEach(card => {
+    const id = card.dataset.unit;
+    const unit = UNITS.find(u => u.id === id);
+    const cost = UNIT_COST(unit.hp);
+    card.classList.toggle('unavailable', Game.gold < cost);
+  });
+}
+
+let toastEl = null;
+function showToast(msg, kind = 'pirate') {
+  if (toastEl) toastEl.remove();
+  toastEl = document.createElement('div');
+  toastEl.className = `toast ${kind}`;
+  toastEl.textContent = msg;
+  document.body.appendChild(toastEl);
+  setTimeout(() => { if (toastEl) { toastEl.remove(); toastEl = null; } }, 1800);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   11.  BUILD MENU  (faction picker, loadout, info panel)
+   ═══════════════════════════════════════════════════════════ */
+
+const splash = document.getElementById('splash');
+const splashPicker = document.getElementById('splash-picker');
+const btnGo = document.getElementById('btn-go');
+
+splashPicker.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    splashPicker.querySelectorAll('button').forEach(b => b.style.background = '');
+    btn.style.background = 'rgba(255,255,255,0.08)';
+    Game.faction = btn.dataset.faction;
+    btnGo.disabled = false;
+    btnGo.textContent = `DEPLOY AS ${btn.textContent.trim().toUpperCase()}`;
+  });
+});
+btnGo.addEventListener('click', () => {
+  if (!Game.faction) return;
+  splash.classList.add('hidden');
+  startGame();
+});
+
+function startGame() {
+  computeBuildable();
+  // faction crest
+  crestEl.textContent = Game.faction.toUpperCase();
+  crestEl.className = `crest ${Game.faction}`;
+  // build the loadout: 4 units from the chosen faction, ladder order
+  const factionUnits = UNITS.filter(u => u.faction === Game.faction);
+  // Pick 4 representative: tier 0, 1, 2, 3 of the 5-tiers for nice ramp.
+  const picks = [factionUnits[0], factionUnits[1], factionUnits[2], factionUnits[3]];
+  Game.loadout = picks;
+  renderLoadout();
+  renderInfo();
+  Game.state = 'idle';
+  updateHUD();
+  Sound.play('click');
+}
+
+function renderLoadout() {
+  loadoutEl.innerHTML = '<span class="hint">DETACHMENT · CLICK A UNIT, THEN A HIGHLIGHTED TILE · HOTKEYS 1–4</span>';
+  Game.loadout.forEach((unit, i) => {
+    const card = document.createElement('div');
+    card.className = 'unit-card';
+    card.dataset.unit = unit.id;
+    card.dataset.faction = unit.faction;
+    card.innerHTML = `
+      <span class="key">${i + 1}</span>
+      <div class="preview"></div>
+      <div class="name">${unit.name}</div>
+      <div class="cost">◉ ${UNIT_COST(unit.hp)}</div>
+    `;
+    // mini isometric preview in a 2D canvas
+    const cnv = document.createElement('canvas');
+    cnv.width = 80; cnv.height = 56;
+    card.querySelector('.preview').appendChild(cnv);
+    drawMiniRig(cnv, unit);
+    card.addEventListener('click', () => selectLoadout(unit.id));
+    loadoutEl.appendChild(card);
+  });
+  refreshLoadoutSelection();
+}
+
+function selectLoadout(id) {
+  if (Game.selected === id) {
+    Game.selected = null;
+  } else {
+    Game.selected = id;
+  }
+  refreshLoadoutSelection();
+  refreshHighlights();
+  renderInfo();
+  Sound.play('click');
+}
+
+function refreshLoadoutSelection() {
+  document.querySelectorAll('.unit-card').forEach(card => {
+    card.classList.toggle('selected', card.dataset.unit === Game.selected);
+  });
+}
+
+function renderInfo() {
+  if (!Game.selected) {
+    infoEl.hidden = true;
+    return;
+  }
+  const unit = UNITS.find(u => u.id === Game.selected);
+  if (!unit) { infoEl.hidden = true; return; }
+  infoEl.hidden = false;
+  const iname = document.getElementById('info-name');
+  const idesc = document.getElementById('info-desc');
+  const istats = document.getElementById('info-stats');
+  const imeta = document.getElementById('info-meta');
+  iname.textContent = unit.name;
+  iname.style.color = '#' + facColors(unit.faction).main.toString(16).padStart(6, '0');
+  iname.innerHTML = unit.name + ` <span class="faction-tag" style="color:#${facColors(unit.faction).main.toString(16).padStart(6,'0')}">${unit.faction.toUpperCase()}</span>`;
+  idesc.textContent = unit.tag;
+  const range = 3 + Math.floor(unit.hp / 80);
+  istats.innerHTML = `
+    <div class="k">HP</div><div class="v">${unit.hp}</div>
+    <div class="k">Armor</div><div class="v">${unit.armor}</div>
+    <div class="k">Speed</div><div class="v">${unit.speed.toFixed(2)}</div>
+    <div class="k">Lives</div><div class="v">${unit.lives}</div>
+    <div class="k">Range</div><div class="v">${range} tiles</div>
+    <div class="k">Cost</div><div class="v">◉ ${UNIT_COST(unit.hp)}</div>
+  `;
+  imeta.textContent = `Shape: ${unit.shape.toUpperCase()} · Tier ${Math.floor(unit.hp/100)}`;
+}
+
+// mini 2D silhouette (so the loadout card has a tiny preview without a
+// full second Three.js viewport).
+function drawMiniRig(canvas, unit) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const c = facColors(unit.faction);
+  const hex = (n) => '#' + n.toString(16).padStart(6, '0');
+  const main = hex(c.main);
+  const deep = hex(c.deep);
+  const light = hex(c.light);
+  const spark = hex(c.spark);
+  // small isometric "block stack" representation, height = unit.hp / 60
+  const H = Math.min(6, Math.max(2, Math.floor(unit.hp / 60)));
+  const W = 4;
+  const cx = w / 2, cy = h - 6;
+  for (let i = H - 1; i >= 0; i--) {
+    const y = cy - i * 6;
+    // back row (dark)
+    ctx.fillStyle = deep;
+    ctx.beginPath();
+    ctx.moveTo(cx - W * 4, y);
+    ctx.lineTo(cx, y - 3);
+    ctx.lineTo(cx + W * 4, y);
+    ctx.lineTo(cx, y + 3);
+    ctx.closePath(); ctx.fill();
+    // main
+    ctx.fillStyle = main;
+    ctx.beginPath();
+    ctx.moveTo(cx - W * 4, y - 3);
+    ctx.lineTo(cx, y - 6);
+    ctx.lineTo(cx + W * 4, y - 3);
+    ctx.lineTo(cx + W * 4, y + 3);
+    ctx.lineTo(cx, y + 6);
+    ctx.lineTo(cx - W * 4, y + 3);
+    ctx.closePath(); ctx.fill();
+    // highlight
+    ctx.fillStyle = light;
+    ctx.beginPath();
+    ctx.moveTo(cx, y - 6);
+    ctx.lineTo(cx + W * 4, y - 3);
+    ctx.lineTo(cx, y);
+    ctx.closePath(); ctx.fill();
+  }
+  // spark on top
+  if (H > 0) {
+    ctx.fillStyle = spark;
+    ctx.fillRect(cx - 2, cy - H * 6 - 2, 4, 4);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   12.  KEYBOARD
+   ═══════════════════════════════════════════════════════════ */
+window.addEventListener('keydown', (e) => {
+  if (e.key === '1') selectLoadout(Game.loadout[0]?.id);
+  else if (e.key === '2') selectLoadout(Game.loadout[1]?.id);
+  else if (e.key === '3') selectLoadout(Game.loadout[2]?.id);
+  else if (e.key === '4') selectLoadout(Game.loadout[3]?.id);
+  else if (e.key === 'Escape') { Game.selected = null; refreshLoadoutSelection(); refreshHighlights(); renderInfo(); }
+  else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (Game.state === 'idle' || Game.state === 'playing') startNextWave(); }
+  else if (e.key === 'p') togglePause();
+});
+
+/* ═══════════════════════════════════════════════════════════
+   13.  TOP-BAR BUTTONS
+   ═══════════════════════════════════════════════════════════ */
+const btnPause = document.getElementById('btn-pause');
+const btnSpawn = document.getElementById('btn-spawn');
+const btnSpeed = document.getElementById('btn-speed');
+const btnReset = document.getElementById('btn-reset');
+
+function togglePause() {
+  if (Game.state === 'won' || Game.state === 'lost') return;
+  Game.state = (Game.state === 'paused') ? 'playing' : 'paused';
+  btnPause.textContent = Game.state === 'paused' ? 'RESUME' : 'PAUSE';
+  Sound.play('click');
+}
+btnPause.addEventListener('click', togglePause);
+
+btnSpawn.addEventListener('click', () => {
+  if (Game.state === 'idle' || Game.state === 'playing') startNextWave();
+});
+const SPEEDS = [1, 2, 3];
+let speedIdx = 0;
+btnSpeed.addEventListener('click', () => {
+  speedIdx = (speedIdx + 1) % SPEEDS.length;
+  Game.speed = SPEEDS[speedIdx];
+  btnSpeed.textContent = `SPEED ${Game.speed}×`;
+  Sound.play('click');
+});
+btnReset.addEventListener('click', () => {
+  // wipe scene of placements/enemies/projectiles
+  Game.placements.forEach(p => { scene.remove(p.rig); scene.remove(p.hpBar); });
+  Game.enemies.forEach(e => { scene.remove(e.rig); scene.remove(e.hpBar); });
+  Game.projectiles.forEach(pr => scene.remove(pr.mesh));
+  Game.placements = []; Game.enemies = []; Game.projectiles = [];
+  Game.gold = 180; Game.lives = 20; Game.wave = 0; Game.state = 'idle';
+  Game.spawnQueue = []; Game.spawnTimer = 0;
+  updateHUD();
+  Sound.play('click');
+});
+
+/* ═══════════════════════════════════════════════════════════
+   14.  COMBAT  (movement, fire, damage, leaks)
+   ═══════════════════════════════════════════════════════════ */
+
+function tileToWorld3(c, r, y = 0) {
+  return new THREE.Vector3(-HALF_W + (c + 0.5) * TILE, y, -HALF_H + (r + 0.5) * TILE);
+}
+
+function updateEnemies(dt) {
+  for (let i = Game.enemies.length - 1; i >= 0; i--) {
+    const e = Game.enemies[i];
+    // movement along path
+    if (e.pathIdx >= PATH_TILES.length - 1) {
+      // reached the end — leak
+      Game.lives -= e.unit.lives;
+      scene.remove(e.rig);
+      scene.remove(e.hpBar);
+      Game.enemies.splice(i, 1);
+      Sound.play('leak');
+      if (Game.lives <= 0) {
+        Game.lives = 0;
+        updateHUD();
+        endGame(false);
+        return;
+      }
+      updateHUD();
+      continue;
+    }
+    const fromW = tileToWorld3(...PATH_TILES[e.pathIdx], 0.18);
+    const toW = tileToWorld3(...PATH_TILES[e.pathIdx + 1], 0.18);
+    const segDist = fromW.distanceTo(toW);
+    const speed = e.baseSpeed * (e.slowUntil > performance.now() / 1000 ? 0.55 : 1.0);
+    e.progress += (speed * dt) / segDist;
+    if (e.progress >= 1) {
+      e.progress = 0;
+      e.pathIdx++;
+      continue;
+    }
+    e.rig.position.lerpVectors(fromW, toW, e.progress);
+    // face direction of travel
+    const dir = new THREE.Vector3().subVectors(toW, fromW).normalize();
+    e.rig.rotation.y = Math.atan2(dir.x, dir.z) - Math.PI / 2;
+    // bob
+    e.bobPhase += dt * 4;
+    e.rig.position.y = 0.18 + Math.sin(e.bobPhase) * 0.04;
+    // hp bar
+    e.hpBar.position.set(e.rig.position.x, 1.2, e.rig.position.z);
+    e.hpBar.lookAt(camera.position);
+    const t = Math.max(0, e.hp / e.maxHp);
+    e.hpBar.userData.fill.scale.x = t;
+  }
+}
+
+function updatePlacements(dt, now) {
+  for (const p of Game.placements) {
+    // bob
+    p.rig.userData.bobPhase += dt * 1.6;
+    p.rig.position.y = 0.18 + Math.sin(p.rig.userData.bobPhase) * 0.05;
+    // rotate slowly for visual life
+    p.rig.rotation.y += dt * 0.2;
+    p.hpBar.position.set(p.rig.position.x, 1.2, p.rig.position.z);
+    p.hpBar.lookAt(camera.position);
+    updateHpBar(p);
+    // aura: apply to nearby placements
+    if (p.aura) {
+      for (const q of Game.placements) {
+        if (q === p) continue;
+        const d = p.rig.position.distanceTo(q.rig.position);
+        if (d <= p.aura.radius) {
+          // represented by a small color tint we don't actually need to apply
+        }
+      }
+    }
+  }
+}
+
+function updateCombat(dt, now) {
+  // placements fire at the nearest enemy in range
+  for (const p of Game.placements) {
+    if (now - p.lastFire < p.cd) continue;
+    let nearest = null, nd = p.range * TILE + 0.01;
+    for (const e of Game.enemies) {
+      const d = p.rig.position.distanceTo(e.rig.position);
+      if (d <= nd) { nearest = e; nd = d; }
+    }
+    if (!nearest) continue;
+    p.lastFire = now;
+    // projectile
+    fireProjectile(p, nearest);
+  }
+  // update projectiles
+  for (let i = Game.projectiles.length - 1; i >= 0; i--) {
+    const pr = Game.projectiles[i];
+    pr.t += dt;
+    const t = pr.t / pr.total;
+    if (t >= 1) {
+      // hit: apply damage (if target still alive)
+      if (pr.target && pr.target.hp > 0) {
+        let dmg = pr.dmg;
+        if (pr.target.armor > 0) dmg = Math.max(1, dmg - pr.target.armor);
+        pr.target.hp -= dmg;
+        Sound.play('hit');
+        if (pr.target.hp <= 0) {
+          // kill
+          Game.gold += pr.target.unit.bounty;
+          scene.remove(pr.target.rig);
+          scene.remove(pr.target.hpBar);
+          const idx = Game.enemies.indexOf(pr.target);
+          if (idx >= 0) Game.enemies.splice(idx, 1);
+          Sound.play('kill');
+        }
+      }
+      scene.remove(pr.mesh);
+      Game.projectiles.splice(i, 1);
+    } else {
+      // lerp position; arc
+      pr.mesh.position.lerpVectors(pr.from, pr.to, t);
+      pr.mesh.position.y = pr.from.y + Math.sin(t * Math.PI) * 0.6;
+    }
+  }
+  // check win
+  if (Game.wave >= Game.maxWaves && Game.enemies.length === 0 && Game.spawnQueue.length === 0 && Game.state !== 'won') {
+    endGame(true);
+  }
+}
+
+function fireProjectile(p, target) {
+  const c = facColors(p.unit.faction);
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(0.14, 0.14, 0.28),
+    new THREE.MeshBasicMaterial({ color: c.spark })
+  );
+  m.position.copy(p.rig.position);
+  m.position.y = 0.6;
+  scene.add(m);
+  Game.projectiles.push({
+    mesh: m, from: p.rig.position.clone(), to: target.rig.position.clone(),
+    dmg: p.dmg, t: 0, total: 0.30, target,
+  });
+  Sound.play('fire');
+}
+
+function updateSpawning(dt) {
+  if (Game.spawnQueue.length === 0) return;
+  Game.spawnTimer -= dt;
+  if (Game.spawnTimer <= 0) {
+    spawnEnemy(Game.spawnQueue.shift());
+    Game.spawnTimer = Game.spawnInterval;
+  }
+}
+
+function endGame(won) {
+  Game.state = won ? 'won' : 'lost';
+  Sound.play(won ? 'win' : 'lose');
+  showToast(won ? 'VICTORY — THE LANE IS HELD' : 'DEFEAT — THE LANE FELL', won ? 'human' : 'pirate');
+  btnSpawn.disabled = true;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   15.  RENDER LOOP
+   ═══════════════════════════════════════════════════════════ */
+
+let lastT = performance.now();
+let frameCount = 0;
+let fpsLast = lastT;
+const fpsEl = document.getElementById('fps');
+
+function animate() {
+  const now = performance.now();
+  let dt = (now - lastT) / 1000;
+  if (dt > 0.1) dt = 0.1;
+  lastT = now;
+  // sky / planet motion
+  if (scene.userData.sky) {
+    scene.userData.sky.material.uniforms.time.value = now * 0.0001;
+  }
+  for (const p of [planet1, planet2]) {
+    const o = p.userData.orbit;
+    o.angle += o.speed * dt;
+    p.position.set(Math.cos(o.angle) * o.dist, 8, Math.sin(o.angle) * o.dist);
+    p.rotation.y += dt * 0.1;
+  }
+  // floating motes drift
+  arena.children.forEach(c => {
+    if (c.userData.drift !== undefined) {
+      c.position.y += c.userData.drift * dt;
+      if (c.position.y > 4) c.position.y = -4;
+      if (c.position.y < -4) c.position.y = 4;
+    }
+  });
+
+  // game tick (scaled by Game.speed)
+  if (Game.state === 'playing') {
+    const sdt = dt * Game.speed;
+    updateSpawning(sdt);
+    updateEnemies(sdt);
+    updateCombat(sdt, now / 1000);
+    updatePlacements(sdt, now / 1000);
+  } else {
+    // still bob placements a little so the scene reads as alive
+    for (const p of Game.placements) {
+      p.rig.userData.bobPhase += dt * 1.0;
+      p.rig.position.y = 0.18 + Math.sin(p.rig.userData.bobPhase) * 0.05;
+      p.rig.rotation.y += dt * 0.2;
+    }
+  }
+
+  renderer.render(scene, camera);
+
+  // fps
+  frameCount++;
+  if (now - fpsLast > 1000) {
+    fpsEl.textContent = `${(frameCount * 1000 / (now - fpsLast)).toFixed(0)} FPS · ${Game.state.toUpperCase()}`;
+    frameCount = 0; fpsLast = now;
+  }
+
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+/* ═══════════════════════════════════════════════════════════
+   16.  RESIZE
+   ═══════════════════════════════════════════════════════════ */
+function resize() {
+  const rect = stage.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// initial HUD paint
+updateHUD();
+</script>
+
+</body>
+</html>
