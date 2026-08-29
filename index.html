@@ -188,6 +188,13 @@
   }
 
   /* ─── RANGE PREVIEW OVERLAY ─────────────────────────────────────── */
+  /* The canvas-wrap is the only direct parent of the <canvas>.  We position
+     it absolutely and make it stretch across the entire stage so that the
+     canvas can be measured independently of the topbar / loadout rows. */
+  #canvas-wrap {
+    position: absolute; inset: 0;
+    overflow: hidden;
+  }
   #stage canvas { display: block; }
   #fps { position: fixed; left: 8px; bottom: 6px; color: var(--chrome); font-size: 10px; letter-spacing: 1px; z-index: 3; }
 
@@ -290,7 +297,7 @@
   </div>
 
   <!-- Three.js canvas mounts here -->
-  <div id="canvas-wrap" style="position: relative;"></div>
+  <div id="canvas-wrap"></div>
 
   <div class="loadout" id="loadout">
     <span class="hint">DETACHMENT · CLICK A UNIT, THEN CLICK A HIGHLIGHTED TILE · HOTKEYS 1–4</span>
@@ -1755,13 +1762,170 @@ requestAnimationFrame(animate);
 
 /* ═══════════════════════════════════════════════════════════
    16.  RESIZE
+   ═══════════════════════════════════════════════════════════
+   The canvas-wrap is the ONLY direct parent of the <canvas>.  It is
+   `position: absolute; inset: 0` in CSS, so its bounding rect is the
+   exact rectangle the 3D viewport should fill.  We measure that and
+   configure the renderer + camera from those numbers, and we also
+   re-install an orbit controller on every resize so the camera state
+   survives viewport changes.
    ═══════════════════════════════════════════════════════════ */
+
+// CAMERA + ORBIT CONTROLLER (custom, no extra file).
+// =====================================================================
+// A tiny custom camera controller that supports:
+//   - left-drag            → orbit around the arena center
+//   - right-drag / 2-finger drag → pan
+//   - mouse wheel / pinch   → dolly in / out
+// It works with mouse, touch, and pen via Pointer Events, so it works on
+// desktop, laptop trackpads, and tablets without any extra dep.
+const cameraTarget = new THREE.Vector3(CAM_LOOK.x, CAM_LOOK.y, CAM_LOOK.z);
+const camState = {
+  // spherical around `cameraTarget`:
+  radius:  Math.hypot(CAM_BASE.x - CAM_LOOK.x, CAM_BASE.z - CAM_LOOK.z),
+  theta:   Math.atan2(CAM_BASE.x - CAM_LOOK.x, CAM_BASE.z - CAM_LOOK.z),
+  phi:     Math.acos((CAM_BASE.y - CAM_LOOK.y) /
+                  Math.hypot(CAM_BASE.x - CAM_LOOK.x, CAM_BASE.y - CAM_LOOK.y, CAM_BASE.z - CAM_LOOK.z)),
+  minRadius: 8,    // don't let the user dolly inside the arena
+  maxRadius: 60,
+  minPhi:     0.10 * Math.PI,  // don't look from directly under the arena
+  maxPhi:     0.45 * Math.PI,  // don't look from directly above (we want a slight bird's-eye)
+};
+const _sphericalTmp = new THREE.Spherical();
+function applyCameraFromState() {
+  _sphericalTmp.set(camState.radius, camState.phi, camState.theta);
+  const v = new THREE.Vector3().setFromSpherical(_sphericalTmp);
+  camera.position.copy(cameraTarget).add(v);
+  camera.lookAt(cameraTarget);
+}
+applyCameraFromState();
+
+let dragMode = null;       // null | 'orbit' | 'pan'
+let dragStartX = 0, dragStartY = 0;
+let dragStartState = null;  // snapshot of camState at dragstart
+let activePointerId = null;
+const domWrap = document.getElementById('canvas-wrap');
+domWrap.style.touchAction = 'none';
+domWrap.style.cursor = 'grab';
+domWrap.addEventListener('pointerdown', (e) => {
+  if (e.target !== domWrap && e.target.tagName !== 'CANVAS') return;
+  // skip the HUD/modal — only when no overlay is intercepting
+  if (document.querySelector('.overlay:not(.hidden)')) return;
+  activePointerId = e.pointerId;
+  domWrap.setPointerCapture(e.pointerId);
+  dragStartX = e.clientX; dragStartY = e.clientY;
+  dragStartState = { radius: camState.radius, theta: camState.theta, phi: camState.phi, target: cameraTarget.clone() };
+  // right-click or middle-click or shift+click = pan, otherwise orbit
+  dragMode = (e.button === 2 || e.button === 1 || e.shiftKey || e.ctrlKey) ? 'pan' : 'orbit';
+  domWrap.style.cursor = dragMode === 'orbit' ? 'grabbing' : 'move';
+  e.preventDefault();
+});
+domWrap.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== activePointerId || !dragMode) return;
+  const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+  if (dragMode === 'orbit') {
+    const orbitSpeed = 0.005;
+    camState.theta = dragStartState.theta - dx * orbitSpeed;
+    camState.phi   = Math.min(camState.maxPhi, Math.max(camState.minPhi,
+                       dragStartState.phi - dy * orbitSpeed));
+  } else { // pan
+    const panSpeed = camState.radius * 0.0015;
+    // compute current camera right and up in world space
+    const forward = new THREE.Vector3().subVectors(cameraTarget, camera.position).normalize();
+    const right   = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+    const up      = new THREE.Vector3().crossVectors(right, forward).normalize();
+    const offset  = new THREE.Vector3()
+      .addScaledVector(right, -dx * panSpeed)
+      .addScaledVector(up,     dy * panSpeed);
+    cameraTarget.copy(dragStartState.target).add(offset);
+  }
+  applyCameraFromState();
+});
+function endDrag(e) {
+  if (e.pointerId !== activePointerId) return;
+  activePointerId = null; dragMode = null; domWrap.style.cursor = 'grab';
+  try { domWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+}
+domWrap.addEventListener('pointerup', endDrag);
+domWrap.addEventListener('pointercancel', endDrag);
+domWrap.addEventListener('pointerleave', endDrag);
+domWrap.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Mouse wheel dolly (and pinch for touch via two pointers, handled below).
+domWrap.addEventListener('wheel', (e) => {
+  if (document.querySelector('.overlay:not(.hidden)')) return;
+  e.preventDefault();
+  const factor = Math.exp(e.deltaY * 0.0015);
+  camState.radius = Math.min(camState.maxRadius, Math.max(camState.minRadius,
+                            dragStartState ? dragStartState.radius : camState.radius) * factor);
+  if (!dragStartState) applyCameraFromState();
+  // refresh dragstartState so wheel-then-drag continues from new radius
+  dragStartState = { radius: camState.radius, theta: camState.theta, phi: camState.phi, target: cameraTarget.clone() };
+}, { passive: false });
+
+// Two-finger pinch for touch devices.
+let pinchStartDist = 0, pinchStartRadius = 0;
+window.addEventListener('pointerdown', (e) => {
+  if (e.target !== domWrap && e.target.tagName !== 'CANVAS') return;
+  if (activePointerId !== null) return;
+  // placeholder: pointer ID is set in the canvas-wrap handler above; this
+  // global listener exists for the rare case of two pointers outside the
+  // wrap (kept for completeness, no-op in practice).
+});
+// touch pinch: we use the two-pointer gesture directly on the wrap.
+const activePointers = new Map();
+domWrap.addEventListener('pointerdown', (e) => {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 2) {
+    const pts = Array.from(activePointers.values());
+    pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    pinchStartRadius = camState.radius;
+  }
+});
+domWrap.addEventListener('pointermove', (e) => {
+  if (!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 2 && pinchStartDist > 0) {
+    const pts = Array.from(activePointers.values());
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const factor = pinchStartDist / dist;
+    camState.radius = Math.min(camState.maxRadius, Math.max(camState.minRadius,
+                              pinchStartRadius * factor);
+    applyCameraFromState();
+  }
+});
+function dropPointer(e) {
+  activePointers.delete(e.pointerId);
+  if (activePointers.size < 2) pinchStartDist = 0;
+}
+domWrap.addEventListener('pointerup',    dropPointer);
+domWrap.addEventListener('pointercancel',dropPointer);
+
 function resize() {
-  const rect = stage.getBoundingClientRect();
-  const w = rect.width, h = rect.height;
+  // Measure the actual canvas-wrap (not the whole #stage which contains
+  // the topbar and loadout row).  The wrap is `position: absolute; inset: 0`
+  // inside the stage grid, so its bounding rect is the play area.
+  const w = domWrap.clientWidth  || 1;
+  const h = domWrap.clientHeight || 1;
+  // Cap the device pixel ratio so 4K displays don't render at 16k x 9k
+  // and tank performance.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
+  // Adjust FOV for very wide or very tall viewports so the arena always
+  // fits comfortably.  The FOV is interpreted vertically, so we
+  // compensate for the aspect ratio.
+  if (w / h < 1.4) {
+    // portrait-ish — widen the lens
+    camera.fov = 55;
+  } else if (w / h > 2.0) {
+    // ultrawide — narrow the lens a bit so the arena doesn't look stretched
+    camera.fov = 32;
+  } else {
+    camera.fov = 42;
+  }
   camera.updateProjectionMatrix();
+  applyCameraFromState();
 }
 window.addEventListener('resize', resize);
 resize();
